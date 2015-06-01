@@ -61,17 +61,54 @@ let transactionRows (table:HtmlNode)=
         |> Seq.map(fun x -> System.Net.WebUtility.HtmlDecode(x.InnerText().Trim()) )
     )
 (**
-we put all these together in the following that takes an html file and spits out
-a csv file.
+We put all these together in the following that takes an html file and spits out
+an array of csv rows
 *)  
-let ConvertHtmlToCSV (html_file:string) (csv_file:string) =
-    let html = HtmlDocument.Load(html_file)
-    let table = transactionTable html
-    let h = headers table |> String.concat ","
-    let rows = transactionRows table |> Seq.map(fun r -> r |> String.concat ",")
-    let csv =  rows |> Seq.append (seq[h;]) |> Seq.toArray
-    csv
+let ConvertHtmlToCSV (html_file:string) =
+    let table = html_file |> HtmlDocument.Load |> transactionTable
+    let h = table |> headers |> String.concat ","
+    table
+    |> transactionRows
+    |> Seq.map(fun cols -> 
+        cols
+        // we use " to delimit a col that has , so replace them with '
+        |> Seq.map(fun col -> col.Replace('"','''))
+        //  if this col contains , then surround it with ""
+        |> Seq.map(fun col -> if col.Contains(",") then ("\"" + col + "\"") else col )
+        |> String.concat ","
+        )
+    |> Seq.append (seq[h;]) //append headers
+    |> Seq.toArray
 
-    
+(**
+This function returns an Async computation that will write the rows to a file
+*)
+let WriteToFileAsync (output_filename:string) (rows:string[]) = 
+    async{
+        use file = File.CreateText(output_filename)
+        return rows 
+                |> Array.reduce(fun a s-> a + "\n" + s) 
+                |> file.WriteAsync
+    }
+
+(**
+Usually you'd have a few html files to convert to csv. In that case use the following
+to do them all in parallel.
+*)
 
 
+let base_folder = @"c:\statements" //this is where the html files are and the output would be saved
+let html_files = System.IO.Directory.GetFiles(base_folder,"*.html")
+
+html_files
+|> Array.map(fun f->
+    async{
+        let filename = System.IO.Path.GetFileNameWithoutExtension(f)
+        let output_filename = System.IO.Path.Combine(base_folder, filename + ".csv")
+        let rows = ConvertHtmlToCSV f
+        return WriteToFileAsync output_filename rows
+    }
+)
+|> Async.Parallel
+|> Async.RunSynchronously
+|> ignore
