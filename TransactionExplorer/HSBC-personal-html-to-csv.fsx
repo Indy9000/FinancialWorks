@@ -15,12 +15,44 @@ statement webpages as you navigate them. Then load this script and call
 *ConvertHtmlToCSV* with appropriate parameters
 *)
 
-#r @"../packages/FSharp.Data.2.2.0/lib/net40/FSharp.Data.dll"
+// Step 0. Boilerplate to get the paket.exe tool
+ 
+open System
+open System.IO
+ 
+Environment.CurrentDirectory <- __SOURCE_DIRECTORY__
+
+let dst = ".paket\paket.exe"
+if not (File.Exists dst) then
+    //let url = "https://github.com/fsprojects/Paket/releases/download/1.26.1/paket.exe"
+    let urlRef = @"https://fsprojects.github.io/Paket/stable"
+    use wc = new Net.WebClient()
+    let url = wc.DownloadString(urlRef)
+    let tmp = Path.GetTempFileName()
+    wc.DownloadFile(url, tmp)
+    Directory.CreateDirectory(".paket") |> ignore
+    File.Move(tmp, dst)
+ 
+// Step 1. Resolve and install the packages
+ 
+#r ".paket\paket.exe"
+ 
+Paket.Dependencies.Install """
+source https://nuget.org/api/v2
+nuget FSharp.Data
+nuget Newtonsoft.Json
+"""
+
+// Step 2. Use the packages
+ 
+#r @"packages\Newtonsoft.Json\lib\net45\Newtonsoft.Json.dll"
+#r @"packages\FSharp.Data\lib\net40\FSharp.Data.dll"
 
 open FSharp.Data
 open System
 open System.IO
-
+open System.Threading
+open System.Threading.Tasks
 (**
 Transactions are inside an html table. It looks as follows:
 ``
@@ -81,34 +113,19 @@ let ConvertHtmlToCSV (html_file:string) =
     |> Seq.toArray
 
 (**
-This function returns an Async computation that will write the rows to a file
-*)
-let WriteToFileAsync (output_filename:string) (rows:string[]) = 
-    async{
-        use file = File.CreateText(output_filename)
-        return rows 
-                |> Array.reduce(fun a s-> a + "\n" + s) 
-                |> file.WriteAsync
-    }
-
-(**
 Usually you'd have a few html files to convert to csv. In that case use the following
 to do them all in parallel.
 *)
-
 
 let base_folder = @"c:\statements" //this is where the html files are and the output would be saved
 let html_files = System.IO.Directory.GetFiles(base_folder,"*.html")
 
 html_files
-|> Array.map(fun f->
-    async{
-        let filename = System.IO.Path.GetFileNameWithoutExtension(f)
-        let output_filename = System.IO.Path.Combine(base_folder, filename + ".csv")
+|> Array.iter(fun f->
+    let filename = System.IO.Path.GetFileNameWithoutExtension(f)
+    let output_filename = System.IO.Path.Combine(base_folder, filename + ".csv")
+    if not <| File.Exists(output_filename) then
         let rows = ConvertHtmlToCSV f
-        return WriteToFileAsync output_filename rows
-    }
-)
-|> Async.Parallel
-|> Async.RunSynchronously
-|> ignore
+        File.WriteAllLines(output_filename,rows)
+        printfn "Created %s" output_filename
+   )
